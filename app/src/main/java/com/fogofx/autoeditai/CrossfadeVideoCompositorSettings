@@ -1,0 +1,87 @@
+package com.fogofx.autoeditai
+
+import androidx.media3.common.OverlaySettings
+import androidx.media3.common.VideoCompositorSettings
+import androidx.media3.common.util.Size
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.StaticOverlaySettings
+
+data class CrossfadeClipSpan(
+    val trackId: Int,
+    val startMs: Long,
+    val endMs: Long
+)
+
+@UnstableApi
+class CrossfadeVideoCompositorSettings(
+    private val clips: List<CrossfadeClipSpan>,
+    private val transitionDurationMs: Long
+) : VideoCompositorSettings {
+
+    override fun getOutputSize(inputSizes: List<Size>): Size {
+        return inputSizes.first()
+    }
+
+    override fun getOverlaySettings(
+        inputId: Int,
+        presentationTimeUs: Long
+    ): OverlaySettings {
+
+        val timeMs = presentationTimeUs / 1000L
+
+        val bottomClip = clips.firstOrNull {
+            it.trackId == 0 &&
+            timeMs >= it.startMs &&
+            timeMs < it.endMs
+        }
+
+        val topClip = clips.firstOrNull {
+            it.trackId == 1 &&
+            timeMs >= it.startMs &&
+            timeMs < it.endMs
+        }
+
+        val alpha = when (inputId) {
+
+            0 -> {
+                if (bottomClip != null) 1f else 0f
+            }
+
+            1 -> {
+
+                when {
+
+                    topClip == null -> 0f
+
+                    bottomClip == null -> 1f
+
+                    topClip.startMs > bottomClip.startMs -> {
+
+                        val progress =
+                            (timeMs - topClip.startMs).toFloat() /
+                            transitionDurationMs.coerceAtLeast(1L)
+
+                        progress.coerceIn(0f, 1f)
+                    }
+
+                    bottomClip.startMs > topClip.startMs -> {
+
+                        val progress =
+                            (timeMs - bottomClip.startMs).toFloat() /
+                            transitionDurationMs.coerceAtLeast(1L)
+
+                        (1f - progress).coerceIn(0f, 1f)
+                    }
+
+                    else -> 1f
+                }
+            }
+
+            else -> 0f
+        }
+
+        return StaticOverlaySettings.Builder()
+            .setAlphaScale(alpha)
+            .build()
+    }
+}
