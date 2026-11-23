@@ -7,7 +7,12 @@ import android.net.Uri
 import android.graphics.Color
 import android.view.Gravity
 import android.widget.*
+import android.content.res.Resources
 import androidx.activity.result.contract.ActivityResultContracts
+
+private fun Int.dp(): Int {
+    return (this * Resources.getSystem().displayMetrics.density).toInt()
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -46,6 +51,7 @@ class MainActivity : ComponentActivity() {
         }
 
         val scroll = ScrollView(this)
+
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -138,22 +144,25 @@ class MainActivity : ComponentActivity() {
         content.addView(heading)
         content.addView(description)
 
-        content.addView(videoBox, LinearLayout.LayoutParams(
-            -1, 190.dp()
-        ).apply {
-            topMargin = 35.dp()
-            bottomMargin = 25.dp()
-        })
+        content.addView(
+            videoBox,
+            LinearLayout.LayoutParams(-1, 190.dp()).apply {
+                topMargin = 35.dp()
+                bottomMargin = 25.dp()
+            }
+        )
 
-        content.addView(selectButton, LinearLayout.LayoutParams(
-            -1, 55.dp()
-        ).apply {
-            bottomMargin = 12.dp
-        })
+        content.addView(
+            selectButton,
+            LinearLayout.LayoutParams(-1, 55.dp()).apply {
+                bottomMargin = 12.dp
+            }
+        )
 
-        content.addView(editButton, LinearLayout.LayoutParams(
-            -1, 55.dp()
-        ))
+        content.addView(
+            editButton,
+            LinearLayout.LayoutParams(-1, 55.dp())
+        )
 
         content.addView(status)
 
@@ -177,6 +186,7 @@ class MainActivity : ComponentActivity() {
                     val index = cursor.getColumnIndex(
                         android.provider.OpenableColumns.DISPLAY_NAME
                     )
+
                     if (index >= 0) {
                         name = cursor.getString(index) ?: name
                     }
@@ -197,9 +207,5 @@ class MainActivity : ComponentActivity() {
             "Vídeo recebido! Vamos preparar o motor de edição na próxima etapa.",
             Toast.LENGTH_LONG
         ).show()
-    }
-
-    private fun Int.dp(): Int {
-        return (this * resources.displayMetrics.density).toInt()
     }
 }
