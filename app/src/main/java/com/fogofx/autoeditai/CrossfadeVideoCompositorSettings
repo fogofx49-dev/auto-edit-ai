@@ -1,3 +1,4 @@
+
 package com.fogofx.autoeditai
 
 import androidx.media3.common.OverlaySettings
@@ -7,18 +8,20 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.StaticOverlaySettings
 
 data class CrossfadeClipSpan(
-    val trackId: Int,
+    val inputId: Int,
     val startMs: Long,
-    val endMs: Long
+    val endMs: Long,
+    val fadeInDurationMs: Long
 )
 
 @UnstableApi
 class CrossfadeVideoCompositorSettings(
-    private val clips: List<CrossfadeClipSpan>,
-    private val transitionDurationMs: Long
+    private val clips: List<CrossfadeClipSpan>
 ) : VideoCompositorSettings {
 
-    override fun getOutputSize(inputSizes: List<Size>): Size {
+    override fun getOutputSize(
+        inputSizes: List<Size>
+    ): Size {
         return inputSizes.first()
     }
 
@@ -29,55 +32,23 @@ class CrossfadeVideoCompositorSettings(
 
         val timeMs = presentationTimeUs / 1000L
 
-        val bottomClip = clips.firstOrNull {
-            it.trackId == 0 &&
-            timeMs >= it.startMs &&
-            timeMs < it.endMs
+        val clip = clips.firstOrNull {
+            it.inputId == inputId
         }
 
-        val topClip = clips.firstOrNull {
-            it.trackId == 1 &&
-            timeMs >= it.startMs &&
-            timeMs < it.endMs
-        }
-
-        val alpha = when (inputId) {
-
-            0 -> {
-                if (bottomClip != null) 1f else 0f
-            }
-
-            1 -> {
-
-                when {
-
-                    topClip == null -> 0f
-
-                    bottomClip == null -> 1f
-
-                    topClip.startMs > bottomClip.startMs -> {
-
-                        val progress =
-                            (timeMs - topClip.startMs).toFloat() /
-                            transitionDurationMs.coerceAtLeast(1L)
-
-                        progress.coerceIn(0f, 1f)
-                    }
-
-                    bottomClip.startMs > topClip.startMs -> {
-
-                        val progress =
-                            (timeMs - bottomClip.startMs).toFloat() /
-                            transitionDurationMs.coerceAtLeast(1L)
-
-                        (1f - progress).coerceIn(0f, 1f)
-                    }
-
-                    else -> 1f
-                }
-            }
-
-            else -> 0f
+        val alpha = if (
+            clip == null ||
+            timeMs < clip.startMs ||
+            timeMs >= clip.endMs
+        ) {
+            0f
+        } else if (clip.fadeInDurationMs <= 0L) {
+            1f
+        } else {
+            (
+                (timeMs - clip.startMs).toFloat() /
+                clip.fadeInDurationMs.toFloat()
+            ).coerceIn(0f, 1f)
         }
 
         return StaticOverlaySettings.Builder()
