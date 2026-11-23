@@ -10,13 +10,26 @@ import android.view.Gravity
 import android.widget.*
 import android.media.MediaMetadataRetriever
 import android.provider.OpenableColumns
+import android.provider.MediaStore
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
+import java.io.File
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.transformer.Transformer
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.ExportException
 import kotlin.math.abs
 
+@UnstableApi
 class MainActivity : ComponentActivity() {
 
     private var selectedVideo: Uri? = null
     private var detectedScenes: List<Long> = emptyList()
+    private var videoDurationMs: Long = 0L
 
     private lateinit var videoInfo: TextView
     private lateinit var editButton: Button
@@ -27,6 +40,7 @@ class MainActivity : ComponentActivity() {
         if (uri != null) {
             selectedVideo = uri
             detectedScenes = emptyList()
+            videoDurationMs = 0L
             showVideo(uri)
         }
     }
@@ -182,6 +196,7 @@ class MainActivity : ComponentActivity() {
 
             var name = "Vídeo selecionado"
             var result: String
+            var durationMs = 0L
 
             try {
                 contentResolver.query(
@@ -207,7 +222,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     retriever.setDataSource(this, uri)
 
-                    val duration = retriever.extractMetadata(
+                    durationMs = retriever.extractMetadata(
                         MediaMetadataRetriever.METADATA_KEY_DURATION
                     )?.toLongOrNull() ?: 0L
 
@@ -219,14 +234,7 @@ class MainActivity : ComponentActivity() {
                         MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
                     )?.toIntOrNull() ?: 0
 
-                    val seconds = duration / 1000
-                    val minutes = seconds / 60
-                    val remainingSeconds = seconds % 60
-
-                    val durationText = "%02d:%02d".format(
-                        minutes,
-                        remainingSeconds
-                    )
+                    val durationText = formatTime(durationMs)
 
                     result = """
                         ✓ ANÁLISE CONCLUÍDA
@@ -258,12 +266,15 @@ class MainActivity : ComponentActivity() {
             }
 
             runOnUiThread {
+                videoDurationMs = durationMs
                 videoInfo.text = result
-                editButton.isEnabled = true
+                editButton.isEnabled = durationMs > 0L
             }
 
         }.start()
     }
+
+    // DETECTAR CENAS E INICIAR O CORTE
 
     private fun startAutomaticEdit() {
 
@@ -279,49 +290,40 @@ class MainActivity : ComponentActivity() {
             try {
 
                 val scenes = detectSceneChanges(uri)
-
                 detectedScenes = scenes
 
-                val result = if (scenes.isEmpty()) {
-
-                    """
-                    ✓ ANÁLISE CONCLUÍDA
-
-                    Quantidade: 0
-
-                    Nenhuma mudança visual significativa
-                    foi detectada nos intervalos analisados.
-                    """.trimIndent()
-
-                } else {
-
-                    val sceneList = scenes.mapIndexed { index, time ->
-                        "${index + 1}. ${formatTime(time)}"
-                    }.joinToString("\n")
-
-                    """
-                    ✓ CENAS DETECTADAS
-
-                    Quantidade: ${detectedScenes.size}
-
-                    Momentos encontrados:
-
-                    $sceneList
-
-                    Análise concluída!
-                    """.trimIndent()
-                }
-
                 runOnUiThread {
-                    videoInfo.text = result
-                    editButton.isEnabled = true
-                    editButton.text = "✦ EDITAR AUTOMATICAMENTE"
+
+                    val sceneList = if (scenes.isEmpty()) {
+
+                        "Nenhuma mudança visual significativa detectada."
+
+                    } else {
+
+                        scenes.mapIndexed { index, time ->
+                            "${index + 1}. ${formatTime(time)}"
+                        }.joinToString("\n")
+                    }
+
+                    videoInfo.text = """
+                        ✓ CENAS DETECTADAS
+
+                        Quantidade: ${scenes.size}
+
+                        Momentos encontrados:
+
+                        $sceneList
+
+                        Preparando o primeiro corte...
+                    """.trimIndent()
+
+                    exportFirstClip(uri)
                 }
 
             } catch (e: Exception) {
 
                 runOnUiThread {
-                    videoInfo.text = "Erro ao analisar as cenas."
+                    videoInfo.text = "Erro ao analisar as cenas: ${e.message}"
                     editButton.isEnabled = true
                     editButton.text = "✦ EDITAR AUTOMATICAMENTE"
                 }
@@ -329,6 +331,224 @@ class MainActivity : ComponentActivity() {
 
         }.start()
     }
+
+    // PRIMEIRO CORTE AUTOMÁTICO REAL
+
+    private fun exportFirstClip(uri: Uri) {
+
+        val duration = videoDurationMs
+
+        if (duration <= 0L) {
+            videoInfo.text = "Não foi possível identificar a duração."
+            editButton.isEnabled = true
+            editButton.text = "✦ EDITAR AUTOMATICAMENTE"
+            return
+        }
+
+        val clipDuration = minOf(5000L, duration)
+
+        var startMs = detectedScenes.firstOrNull() ?: 0L
+
+        if (startMs + clipDuration > duration) {
+            startMs = (duration - clipDuration).coerceAtLeast(0L)
+        }
+
+        val endMs = startMs + clipDuration
+
+        if (endMs <= startMs) {
+            videoInfo.text = "Não foi possível criar o trecho."
+            editButton.isEnabled = true
+            editButton.text = "✦ EDITAR AUTOMATICAMENTE"
+            return
+        }
+
+        val outputFile = File(
+            cacheDir,
+            "auto_edit_${System.currentTimeMillis()}.mp4"
+        )
+
+        videoInfo.text = """
+            ✂️ CRIANDO CORTE AUTOMÁTICO
+
+            Início: ${formatTime(startMs)}
+
+            Final: ${formatTime(endMs)}
+
+            Duração: ${formatTime(endMs - startMs)}
+
+            Exportando vídeo...
+        """.trimIndent()
+
+        try {
+
+            val clipping = MediaItem.ClippingConfiguration.Builder()
+                .setStartPositionMs(startMs)
+                .setEndPositionMs(endMs)
+                .build()
+
+            val mediaItem = MediaItem.Builder()
+                .setUri(uri)
+                .setClippingConfiguration(clipping)
+                .build()
+
+            val transformer = Transformer.Builder(this)
+                .addListener(object : Transformer.Listener {
+
+                    override fun onCompleted(
+                        composition: Composition,
+                        exportResult: ExportResult
+                    ) {
+
+                        try {
+
+                            val savedLocation = saveExportedVideo(outputFile)
+
+                            videoInfo.text = """
+                                ✓ CORTE CONCLUÍDO!
+
+                                Trecho utilizado:
+
+                                ${formatTime(startMs)} até ${formatTime(endMs)}
+
+                                Duração:
+                                ${formatTime(endMs - startMs)}
+
+                                Formato: MP4
+
+                                Vídeo salvo com sucesso!
+
+                                $savedLocation
+                            """.trimIndent()
+
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Vídeo editado com sucesso!",
+                                Toast.LENGTH_LONG
+                            ).show()
+
+                        } catch (e: Exception) {
+
+                            videoInfo.text =
+                                "O corte foi criado, mas não foi possível salvar: ${e.message}"
+                        }
+
+                        editButton.isEnabled = true
+                        editButton.text = "✦ EDITAR AUTOMATICAMENTE"
+                    }
+
+                    override fun onError(
+                        composition: Composition,
+                        exportResult: ExportResult,
+                        exportException: ExportException
+                    ) {
+
+                        outputFile.delete()
+
+                        videoInfo.text =
+                            "Erro ao exportar vídeo: ${exportException.message}"
+
+                        editButton.isEnabled = true
+                        editButton.text = "✦ EDITAR AUTOMATICAMENTE"
+                    }
+                })
+                .build()
+
+            transformer.start(mediaItem, outputFile.absolutePath)
+
+        } catch (e: Exception) {
+
+            outputFile.delete()
+
+            videoInfo.text = "Erro ao iniciar o corte: ${e.message}"
+
+            editButton.isEnabled = true
+            editButton.text = "✦ EDITAR AUTOMATICAMENTE"
+        }
+    }
+
+    // SALVAR O MP4 NA PASTA DE VÍDEOS
+
+    private fun saveExportedVideo(file: File): String {
+
+        if (!file.exists() || file.length() == 0L) {
+            throw Exception("O arquivo exportado está vazio.")
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+
+            val values = ContentValues().apply {
+                put(
+                    MediaStore.Video.Media.DISPLAY_NAME,
+                    "AUTO_EDIT_${System.currentTimeMillis()}.mp4"
+                )
+
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+
+                put(
+                    MediaStore.Video.Media.RELATIVE_PATH,
+                    Environment.DIRECTORY_MOVIES + "/AUTO EDIT AI"
+                )
+
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+
+            val outputUri = contentResolver.insert(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                values
+            ) ?: throw Exception("Não foi possível criar o arquivo.")
+
+            try {
+
+                contentResolver.openOutputStream(outputUri)?.use { output ->
+                    file.inputStream().use { input ->
+                        input.copyTo(output)
+                    }
+                } ?: throw Exception("Não foi possível gravar o vídeo.")
+
+                val completedValues = ContentValues().apply {
+                    put(MediaStore.Video.Media.IS_PENDING, 0)
+                }
+
+                contentResolver.update(
+                    outputUri,
+                    completedValues,
+                    null,
+                    null
+                )
+
+                file.delete()
+
+                return "Pasta: Filmes/AUTO EDIT AI"
+
+            } catch (e: Exception) {
+
+                contentResolver.delete(outputUri, null, null)
+                throw e
+            }
+
+        } else {
+
+            val directory = getExternalFilesDir(
+                Environment.DIRECTORY_MOVIES
+            ) ?: throw Exception("Pasta de vídeos indisponível.")
+
+            if (!directory.exists()) {
+                directory.mkdirs()
+            }
+
+            val destination = File(
+                directory,
+                "AUTO_EDIT_${System.currentTimeMillis()}.mp4"
+            )
+
+            file.copyTo(destination, overwrite = true)
+            file.delete()
+
+            return "Arquivo salvo em: ${destination.absolutePath}"
+        }
+    }
+
+    // DETECTOR DE MUDANÇAS VISUAIS
 
     private fun detectSceneChanges(uri: Uri): List<Long> {
 
