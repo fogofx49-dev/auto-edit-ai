@@ -294,7 +294,7 @@ class MainActivity : ComponentActivity() {
 
         videoInfo.text = """
             Analisando vídeo...
-            
+
             Detectando mudanças visuais...
             Analisando música original...
             Procurando batidas...
@@ -472,10 +472,11 @@ class MainActivity : ComponentActivity() {
                                 buffer.limit(info.offset + info.size)
                                 buffer.order(ByteOrder.LITTLE_ENDIAN)
 
+                                // CORREÇÃO: acesso seguro ao formato de áudio
                                 val encoding = try {
-                                    outputFormat.getInteger(
+                                    outputFormat?.getInteger(
                                         MediaFormat.KEY_PCM_ENCODING
-                                    )
+                                    ) ?: 2
                                 } catch (e: Exception) {
                                     2
                                 }
