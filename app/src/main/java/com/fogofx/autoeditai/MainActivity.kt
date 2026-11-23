@@ -16,6 +16,8 @@ import kotlin.math.abs
 class MainActivity : ComponentActivity() {
 
     private var selectedVideo: Uri? = null
+    private var detectedScenes: List<Long> = emptyList()
+
     private lateinit var videoInfo: TextView
     private lateinit var editButton: Button
 
@@ -24,6 +26,7 @@ class MainActivity : ComponentActivity() {
     ) { uri ->
         if (uri != null) {
             selectedVideo = uri
+            detectedScenes = emptyList()
             showVideo(uri)
         }
     }
@@ -91,7 +94,7 @@ class MainActivity : ComponentActivity() {
         val videoBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(16.dp(), 35.dp(), 16.dp(), 35.dp())
+            setPadding(16.dp(), 20.dp(), 16.dp(), 20.dp())
             setBackgroundColor(Color.rgb(18, 29, 48))
         }
 
@@ -145,7 +148,7 @@ class MainActivity : ComponentActivity() {
 
         content.addView(
             videoBox,
-            LinearLayout.LayoutParams(-1, 190.dp()).apply {
+            LinearLayout.LayoutParams(-1, 300.dp()).apply {
                 topMargin = 35.dp()
                 bottomMargin = 25.dp()
             }
@@ -235,6 +238,9 @@ class MainActivity : ComponentActivity() {
                         Resolução: ${width} × ${height}
 
                         Status: Vídeo carregado
+
+                        Pressione EDITAR AUTOMATICAMENTE
+                        para detectar as cenas.
                     """.trimIndent()
 
                 } finally {
@@ -274,10 +280,14 @@ class MainActivity : ComponentActivity() {
 
                 val scenes = detectSceneChanges(uri)
 
+                detectedScenes = scenes
+
                 val result = if (scenes.isEmpty()) {
 
                     """
                     ✓ ANÁLISE CONCLUÍDA
+
+                    Quantidade: 0
 
                     Nenhuma mudança visual significativa
                     foi detectada nos intervalos analisados.
@@ -292,11 +302,13 @@ class MainActivity : ComponentActivity() {
                     """
                     ✓ CENAS DETECTADAS
 
-                    Quantidade: ${scenes.size}
+                    Quantidade: ${detectedScenes.size}
 
                     Momentos encontrados:
 
                     $sceneList
+
+                    Análise concluída!
                     """.trimIndent()
                 }
 
