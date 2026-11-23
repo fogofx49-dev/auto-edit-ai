@@ -614,7 +614,7 @@ class MainActivity : ComponentActivity() {
         return detected
     }
 
-    // MONTAGEM AUTOMÁTICA SEM CAMADA PRETA
+    // MONTAGEM AUTOMÁTICA COM MÚSICA ORIGINAL CONTÍNUA
 
     private fun exportFirstClip(uri: Uri) {
 
@@ -700,10 +700,11 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 4. PREPARAR OS TRECHOS SEM EFEITOS DE SOBREPOSIÇÃO
+        // 4. PREPARAR OS TRECHOS E A FAIXA DE ÁUDIO
 
         val editedItems = mutableListOf<EditedMediaItem>()
         val usedTimes = mutableListOf<String>()
+        var montageDurationMs = 0L
 
         try {
 
@@ -737,8 +738,11 @@ class MainActivity : ComponentActivity() {
                     emptyList()
                 )
 
+                // REMOVER O ÁUDIO DE CADA CLIPE
+
                 editedItems.add(
                     EditedMediaItem.Builder(mediaItem)
+                        .setRemoveAudio(true)
                         .setEffects(effects)
                         .build()
                 )
@@ -748,18 +752,50 @@ class MainActivity : ComponentActivity() {
                 )
 
                 lastEnd = end
+                montageDurationMs += end - safeStart
             }
 
             if (editedItems.isEmpty()) {
                 throw Exception("Nenhum trecho válido foi encontrado.")
             }
 
-            val sequence = EditedMediaItemSequence.Builder()
-                .addItems(editedItems)
+            if (montageDurationMs <= 0L) {
+                throw Exception("Duração da montagem inválida.")
+            }
+
+            // SEQUÊNCIA VISUAL: SOMENTE OS VÍDEOS
+
+            val videoSequence =
+                EditedMediaItemSequence.withVideoFrom(editedItems)
+
+            // FAIXA DE ÁUDIO: COMEÇA NO INÍCIO DA MÚSICA ORIGINAL
+
+            val audioClipping =
+                MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(0L)
+                    .setEndPositionMs(montageDurationMs)
+                    .build()
+
+            val audioMediaItem = MediaItem.Builder()
+                .setUri(uri)
+                .setClippingConfiguration(audioClipping)
                 .build()
 
+            // EXTRAIR SOMENTE O ÁUDIO ORIGINAL
+
+            val originalAudio = EditedMediaItem.Builder(audioMediaItem)
+                .setRemoveVideo(true)
+                .build()
+
+            val audioSequence =
+                EditedMediaItemSequence.withAudioFrom(
+                    listOf(originalAudio)
+                )
+
+            // COMPOSIÇÃO COM VÍDEO E MÚSICA EM PARALELO
+
             val composition = Composition.Builder(
-                listOf(sequence)
+                listOf(videoSequence, audioSequence)
             ).build()
 
             val outputFile = File(
@@ -776,7 +812,11 @@ class MainActivity : ComponentActivity() {
 
                 Trechos selecionados: ${editedItems.size}
 
-                Efeitos: Desativados para teste
+                Música: Original contínua
+
+                Áudio dos clipes: Removido
+
+                Duração da montagem: ${formatTime(montageDurationMs)}
 
                 ${usedTimes.joinToString("\n")}
 
@@ -805,7 +845,11 @@ class MainActivity : ComponentActivity() {
 
                                 Trechos unidos: ${editedItems.size}
 
-                                Efeitos: Desativados
+                                Música: Original contínua
+
+                                Áudio dos clipes: Removido
+
+                                Transições: Próxima etapa
 
                                 ${usedTimes.joinToString("\n")}
 
