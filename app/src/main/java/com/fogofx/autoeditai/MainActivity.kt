@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.net.Uri
 import android.graphics.Color
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.view.Gravity
 import android.widget.*
 import android.media.MediaMetadataRetriever
@@ -25,9 +24,6 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
-import androidx.media3.transformer.Effects
-import androidx.media3.effect.CanvasOverlay
-import androidx.media3.effect.OverlayEffect
 import kotlin.math.abs
 
 @UnstableApi
@@ -338,7 +334,7 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    // MONTAGEM AUTOMÁTICA COM FADE
+    // MONTAGEM AUTOMÁTICA
 
     private fun exportFirstClip(uri: Uri) {
 
@@ -353,7 +349,6 @@ class MainActivity : ComponentActivity() {
 
         val clipLength = 3000L
         val maxClips = 8
-        val fadeDurationUs = 350_000L
 
         val startTimes = if (detectedScenes.isEmpty()) {
             listOf(0L)
@@ -379,8 +374,6 @@ class MainActivity : ComponentActivity() {
                     continue
                 }
 
-                val clipDurationUs = (end - safeStart) * 1000L
-
                 val clipping = MediaItem.ClippingConfiguration.Builder()
                     .setStartPositionMs(safeStart)
                     .setEndPositionMs(end)
@@ -391,60 +384,10 @@ class MainActivity : ComponentActivity() {
                     .setClippingConfiguration(clipping)
                     .build()
 
-                // EFEITO FADE IN / FADE OUT
-
-                val fadeOverlay = object : CanvasOverlay(true) {
-
-                    override fun onDraw(
-                        canvas: Canvas,
-                        presentationTimeUs: Long
-                    ) {
-
-                        val fadeIn = if (
-                            presentationTimeUs < fadeDurationUs
-                        ) {
-                            1f - (
-                                presentationTimeUs.toFloat() /
-                                    fadeDurationUs
-                                )
-                        } else {
-                            0f
-                        }
-
-                        val fadeOutStart =
-                            clipDurationUs - fadeDurationUs
-
-                        val fadeOut = if (
-                            presentationTimeUs > fadeOutStart
-                        ) {
-                            (
-                                (presentationTimeUs - fadeOutStart)
-                                    .toFloat() / fadeDurationUs
-                            ).coerceIn(0f, 1f)
-                        } else {
-                            0f
-                        }
-
-                        val alpha = (
-                            maxOf(fadeIn, fadeOut) * 255
-                        ).toInt().coerceIn(0, 255)
-
-                        canvas.drawColor(
-                            Color.argb(alpha, 0, 0, 0)
-                        )
-                    }
-                }
-
-                val effects = Effects(
-                    emptyList(),
-                    listOf(
-                        OverlayEffect(listOf(fadeOverlay))
-                    )
-                )
+                // ADICIONAR TRECHO À MONTAGEM
 
                 editedItems.add(
                     EditedMediaItem.Builder(mediaItem)
-                        .setEffects(effects)
                         .build()
                 )
 
@@ -479,7 +422,7 @@ class MainActivity : ComponentActivity() {
 
                 ${usedTimes.joinToString("\n")}
 
-                Aplicando transições Fade...
+                Preparando os trechos...
 
                 Juntando os vídeos...
 
@@ -506,7 +449,7 @@ class MainActivity : ComponentActivity() {
 
                                 ${usedTimes.joinToString("\n")}
 
-                                Transição: Fade to Black
+                                Montagem: automática
 
                                 Formato: MP4
 
@@ -517,7 +460,7 @@ class MainActivity : ComponentActivity() {
 
                             Toast.makeText(
                                 this@MainActivity,
-                                "Montagem com Fade concluída!",
+                                "Montagem concluída!",
                                 Toast.LENGTH_LONG
                             ).show()
 
