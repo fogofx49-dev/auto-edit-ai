@@ -35,14 +35,7 @@ jobs:
 
       - name: Compilar aplicativo
         run: |
-          for attempt in 1 2 3; do
-            if gradle --no-daemon --refresh-dependencies assembleDebug; then
-              exit 0
-            fi
-            echo "Tentativa $attempt falhou."
-            sleep 20
-          done
-          exit 1
+          gradle --no-daemon --refresh-dependencies assembleDebug --stacktrace --info
 
       - name: Salvar APK
         uses: actions/upload-artifact@v4
