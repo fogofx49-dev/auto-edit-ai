@@ -7,12 +7,7 @@ import android.net.Uri
 import android.graphics.Color
 import android.view.Gravity
 import android.widget.*
-import android.content.res.Resources
 import androidx.activity.result.contract.ActivityResultContracts
-
-private fun Int.dp(): Int {
-    return (this * Resources.getSystem().displayMetrics.density).toInt()
-}
 
 class MainActivity : ComponentActivity() {
 
@@ -78,7 +73,7 @@ class MainActivity : ComponentActivity() {
             textSize = 23f
             setTextColor(white)
             gravity = Gravity.CENTER
-            setPadding(0, 45.dp(), 0, 12.dp)
+            setPadding(0, 45.dp(), 0, 12.dp())
             setTypeface(null, 1)
         }
 
@@ -155,7 +150,7 @@ class MainActivity : ComponentActivity() {
         content.addView(
             selectButton,
             LinearLayout.LayoutParams(-1, 55.dp()).apply {
-                bottomMargin = 12.dp
+                bottomMargin = 12.dp()
             }
         )
 
@@ -207,5 +202,9 @@ class MainActivity : ComponentActivity() {
             "Vídeo recebido! Vamos preparar o motor de edição na próxima etapa.",
             Toast.LENGTH_LONG
         ).show()
+    }
+
+    private fun Int.dp(): Int {
+        return (this * resources.displayMetrics.density).toInt()
     }
 }
