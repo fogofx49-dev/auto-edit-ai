@@ -1,3 +1,4 @@
+
 package com.fogofx.autoeditai
 
 import android.graphics.Bitmap
@@ -64,6 +65,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun createInterface() {
+
         val dark = Color.rgb(8, 12, 25)
         val cyan = Color.rgb(0, 217, 255)
         val white = Color.WHITE
@@ -208,6 +210,7 @@ class MainActivity : ComponentActivity() {
             var durationMs = 0L
 
             try {
+
                 contentResolver.query(
                     uri,
                     arrayOf(OpenableColumns.DISPLAY_NAME),
@@ -215,7 +218,9 @@ class MainActivity : ComponentActivity() {
                     null,
                     null
                 )?.use { cursor ->
+
                     if (cursor.moveToFirst()) {
+
                         val index = cursor.getColumnIndex(
                             OpenableColumns.DISPLAY_NAME
                         )
@@ -229,6 +234,7 @@ class MainActivity : ComponentActivity() {
                 val retriever = MediaMetadataRetriever()
 
                 try {
+
                     retriever.setDataSource(this, uri)
 
                     durationMs = retriever.extractMetadata(
@@ -243,14 +249,12 @@ class MainActivity : ComponentActivity() {
                         MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
                     )?.toIntOrNull() ?: 0
 
-                    val durationText = formatTime(durationMs)
-
                     result = """
                         ✓ ANÁLISE CONCLUÍDA
 
                         Arquivo: $name
 
-                        Duração: $durationText
+                        Duração: ${formatTime(durationMs)}
 
                         Resolução: ${width} × ${height}
 
@@ -275,6 +279,7 @@ class MainActivity : ComponentActivity() {
             }
 
             runOnUiThread {
+
                 videoDurationMs = durationMs
                 videoInfo.text = result
                 editButton.isEnabled = durationMs > 0L
@@ -334,6 +339,7 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
 
                 runOnUiThread {
+
                     videoInfo.text =
                         "Erro ao analisar o vídeo: ${e.message}"
 
@@ -613,7 +619,7 @@ class MainActivity : ComponentActivity() {
         return detected
     }
 
-    // MONTAGEM AUTOMÁTICA COM MÚSICA ORIGINAL CONTÍNUA
+    // MONTAGEM COM DUAS FAIXAS E CROSSFADE
 
     private fun exportFirstClip(uri: Uri) {
 
@@ -626,18 +632,17 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val clipLength = 3000L
+        val clipLength = minOf(3000L, duration)
 
         val maxClips = minOf(
             8,
             maxOf(1, (duration / clipLength).toInt())
         )
 
-        val safeLimit = (duration - 1000L).coerceAtLeast(0L)
-
+        val safeLimit = (duration - clipLength).coerceAtLeast(0L)
         val startTimes = mutableListOf<Long>()
 
-        // 1. PRIORIZAR BATIDAS DA MÚSICA
+        // 1. PRIORIZAR BATIDAS
 
         val orderedBeats = detectedBeats
             .filter { it in 0L..safeLimit }
@@ -699,77 +704,148 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 4. PREPARAR OS TRECHOS E A FAIXA DE ÁUDIO
-
-        val editedItems = mutableListOf<EditedMediaItem>()
-        val usedTimes = mutableListOf<String>()
-        var montageDurationMs = 0L
+        var transparentFile: File? = null
 
         try {
 
-            var lastEnd = -1L
+            val selectedStarts = startTimes
+                .distinct()
+                .sorted()
+                .take(maxClips)
 
-            for (start in startTimes.sorted()) {
+            if (selectedStarts.isEmpty()) {
+                throw Exception("Nenhum trecho válido foi encontrado.")
+            }
 
-                if (editedItems.size >= maxClips) break
+            // CRIAR O PLANO DE TRANSIÇÕES
 
-                val safeStart = start.coerceAtLeast(0L)
-                val end = minOf(safeStart + clipLength, duration)
+            val plan = TransitionPlan.create(
+                selectedStarts,
+                clipLength,
+                detectedBeats
+            )
 
-                if (safeStart < lastEnd || end - safeStart < 1000L) {
-                    continue
-                }
+            if (plan.clips.isEmpty()) {
+                throw Exception("Plano de edição vazio.")
+            }
 
-                val clipping = MediaItem.ClippingConfiguration.Builder()
-                    .setStartPositionMs(safeStart)
-                    .setEndPositionMs(end)
-                    .build()
+            // DUAS SEQUÊNCIAS VISUAIS
+
+            val track0Builder =
+                EditedMediaItemSequence.Builder(
+                    emptyList<EditedMediaItem>()
+                )
+
+            val track1Builder =
+                EditedMediaItemSequence.Builder(
+                    emptyList<EditedMediaItem>()
+                )
+
+            val trackEnds = longArrayOf(0L, 0L)
+            val usedTimes = mutableListOf<String>()
+
+            // IMAGEM TRANSPARENTE PARA PREENCHER
+            // OS ESPAÇOS ENTRE OS CLIPES DE CADA FAIXA.
+
+            if (plan.clips.size > 1) {
+                transparentFile = createTransparentImageFile()
+            }
+
+            for (clip in plan.clips) {
+
+                val start = clip.sourceStartMs
+                val end = minOf(
+                    clip.sourceEndMs,
+                    duration
+                )
+
+                if (end <= start) continue
+
+                val clipping =
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(start)
+                        .setEndPositionMs(end)
+                        .build()
 
                 val mediaItem = MediaItem.Builder()
                     .setUri(uri)
                     .setClippingConfiguration(clipping)
                     .build()
 
-                // SEM OVERLAY: PRESERVA A IMAGEM ORIGINAL
+                val editedItem = EditedMediaItem.Builder(mediaItem)
+                    .setRemoveAudio(true)
+                    .setEffects(
+                        Effects(
+                            emptyList(),
+                            emptyList()
+                        )
+                    )
+                    .build()
 
-                val effects = Effects(
-                    emptyList(),
-                    emptyList()
-                )
+                val trackIndex = clip.trackIndex
 
-                // REMOVER O ÁUDIO DE CADA CLIPE
+                val builder = if (trackIndex == 0) {
+                    track0Builder
+                } else {
+                    track1Builder
+                }
 
-                editedItems.add(
-                    EditedMediaItem.Builder(mediaItem)
-                        .setRemoveAudio(true)
-                        .setEffects(effects)
-                        .build()
-                )
+                // POSIÇÃO VAZIA ANTES DO CLIPE
+
+                val gapMs = (
+                    clip.timelineStartMs -
+                    trackEnds[trackIndex]
+                ).coerceAtLeast(0L)
+
+                if (gapMs > 0L) {
+
+                    val imageFile = transparentFile
+                        ?: throw Exception(
+                            "Imagem transparente indisponível."
+                        )
+
+                    builder.addItem(
+                        createTransparentGapItem(
+                            imageFile,
+                            gapMs
+                        )
+                    )
+                }
+
+                builder.addItem(editedItem)
+
+                trackEnds[trackIndex] = clip.timelineEndMs
 
                 usedTimes.add(
-                    "${formatTime(safeStart)} até ${formatTime(end)}"
+                    "${formatTime(start)} até ${formatTime(end)}"
                 )
-
-                lastEnd = end
-                montageDurationMs += end - safeStart
             }
 
-            if (editedItems.isEmpty()) {
-                throw Exception("Nenhum trecho válido foi encontrado.")
+            if (usedTimes.isEmpty()) {
+                throw Exception("Nenhum trecho válido foi preparado.")
             }
+
+            // CONSTRUIR AS FAIXAS
+
+            val videoSequences = if (plan.clips.size == 1) {
+
+                listOf(track0Builder.build())
+
+            } else {
+
+                listOf(
+                    track0Builder.build(),
+                    track1Builder.build()
+                )
+            }
+
+            val montageDurationMs = plan.durationMs
 
             if (montageDurationMs <= 0L) {
                 throw Exception("Duração da montagem inválida.")
             }
 
-            // SEQUÊNCIA VISUAL
-            // CONSTRUTOR COMPATÍVEL COM MEDIA3 1.5.1
-
-            val videoSequence = EditedMediaItemSequence(
-                editedItems
-            )
-
-            // FAIXA DE ÁUDIO: COMEÇA NO INÍCIO DA MÚSICA ORIGINAL
+            // MÚSICA ORIGINAL CONTÍNUA
 
             val audioClipping =
                 MediaItem.ClippingConfiguration.Builder()
@@ -782,24 +858,23 @@ class MainActivity : ComponentActivity() {
                 .setClippingConfiguration(audioClipping)
                 .build()
 
-            // EXTRAIR SOMENTE O ÁUDIO ORIGINAL
-
             val originalAudio = EditedMediaItem.Builder(audioMediaItem)
                 .setRemoveVideo(true)
                 .build()
-
-            // SEQUÊNCIA DE ÁUDIO
-            // CONSTRUTOR COMPATÍVEL COM MEDIA3 1.5.1
 
             val audioSequence = EditedMediaItemSequence(
                 listOf(originalAudio)
             )
 
-            // COMPOSIÇÃO COM VÍDEO E ÁUDIO
+            // COMPOSIÇÃO COM AS FAIXAS E O ÁUDIO
 
             val composition = Composition.Builder(
-                listOf(videoSequence, audioSequence)
-            ).build()
+                videoSequences + audioSequence
+            )
+                .setVideoCompositorSettings(
+                    CrossfadeVideoCompositorSettings(plan)
+                )
+                .build()
 
             val outputFile = File(
                 cacheDir,
@@ -807,25 +882,29 @@ class MainActivity : ComponentActivity() {
             )
 
             videoInfo.text = """
-                ✂️ MONTAGEM AUTOMÁTICA
+                ✦ MONTAGEM AUTOMÁTICA
 
-                Batidas encontradas: ${detectedBeats.size}
+                Batidas: ${detectedBeats.size}
 
-                Cenas detectadas: ${detectedScenes.size}
+                Cenas: ${detectedScenes.size}
 
-                Trechos selecionados: ${editedItems.size}
+                Trechos: ${plan.clips.size}
+
+                Transição: Crossfade
+
+                Duração da transição:
+                ${plan.transitionDurationMs} ms
 
                 Música: Original contínua
 
                 Áudio dos clipes: Removido
 
-                Duração da montagem: ${formatTime(montageDurationMs)}
+                Duração final:
+                ${formatTime(montageDurationMs)}
 
                 ${usedTimes.joinToString("\n")}
 
-                Preparando montagem...
-
-                Aguarde a exportação.
+                Preparando exportação...
             """.trimIndent()
 
             val transformer = Transformer.Builder(this)
@@ -838,27 +917,31 @@ class MainActivity : ComponentActivity() {
 
                         try {
 
+                            transparentFile?.delete()
+
                             val savedLocation =
                                 saveExportedVideo(outputFile)
 
                             videoInfo.text = """
                                 ✓ EDIÇÃO CONCLUÍDA!
 
-                                Batidas detectadas: ${detectedBeats.size}
+                                Trechos unidos: ${plan.clips.size}
 
-                                Trechos unidos: ${editedItems.size}
+                                Transições:
+                                Crossfade entre os clipes
 
                                 Música: Original contínua
 
                                 Áudio dos clipes: Removido
 
-                                Transições: Cortes diretos
+                                Duração:
+                                ${formatTime(montageDurationMs)}
 
                                 ${usedTimes.joinToString("\n")}
 
                                 Formato: MP4
 
-                                Vídeo salvo com sucesso!
+                                Vídeo salvo!
 
                                 $savedLocation
                             """.trimIndent()
@@ -872,7 +955,7 @@ class MainActivity : ComponentActivity() {
                         } catch (e: Exception) {
 
                             videoInfo.text =
-                                "Erro ao salvar o vídeo: ${e.message}"
+                                "Erro ao salvar: ${e.message}"
                         }
 
                         editButton.isEnabled = true
@@ -886,6 +969,7 @@ class MainActivity : ComponentActivity() {
                     ) {
 
                         outputFile.delete()
+                        transparentFile?.delete()
 
                         videoInfo.text =
                             "Erro na montagem: ${exportException.message}"
@@ -903,12 +987,73 @@ class MainActivity : ComponentActivity() {
 
         } catch (e: Exception) {
 
+            transparentFile?.delete()
+
             videoInfo.text =
                 "Não foi possível montar os vídeos: ${e.message}"
 
             editButton.isEnabled = true
             editButton.text = "✦ EDITAR AUTOMATICAMENTE"
         }
+    }
+
+    // CRIAR IMAGEM PNG TRANSPARENTE
+
+    private fun createTransparentImageFile(): File {
+
+        val bitmap = Bitmap.createBitmap(
+            2,
+            2,
+            Bitmap.Config.ARGB_8888
+        )
+
+        bitmap.eraseColor(Color.TRANSPARENT)
+
+        val file = File(
+            cacheDir,
+            "transparent_${System.currentTimeMillis()}.png"
+        )
+
+        try {
+
+            file.outputStream().use { output ->
+
+                val success = bitmap.compress(
+                    Bitmap.CompressFormat.PNG,
+                    100,
+                    output
+                )
+
+                if (!success) {
+                    throw Exception(
+                        "Não foi possível criar a imagem transparente."
+                    )
+                }
+            }
+
+        } finally {
+            bitmap.recycle()
+        }
+
+        return file
+    }
+
+    // CRIAR PREENCHIMENTO TRANSPARENTE DA FAIXA
+
+    private fun createTransparentGapItem(
+        imageFile: File,
+        durationMs: Long
+    ): EditedMediaItem {
+
+        val imageMediaItem = MediaItem.Builder()
+            .setUri(Uri.fromFile(imageFile))
+            .setMimeType("image/png")
+            .setImageDurationMs(durationMs)
+            .build()
+
+        return EditedMediaItem.Builder(imageMediaItem)
+            .setFrameRate(30)
+            .build()
     }
 
     // SALVAR O MP4
@@ -922,6 +1067,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
 
             val values = ContentValues().apply {
+
                 put(
                     MediaStore.Video.Media.DISPLAY_NAME,
                     "AUTO_EDIT_${System.currentTimeMillis()}.mp4"
@@ -945,9 +1091,11 @@ class MainActivity : ComponentActivity() {
             try {
 
                 contentResolver.openOutputStream(outputUri)?.use { output ->
+
                     file.inputStream().use { input ->
                         input.copyTo(output)
                     }
+
                 } ?: throw Exception("Não foi possível gravar o vídeo.")
 
                 val completedValues = ContentValues().apply {
