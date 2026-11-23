@@ -5,10 +5,6 @@ import androidx.activity.ComponentActivity
 import android.os.Bundle
 import android.net.Uri
 import android.graphics.Color
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.PorterDuff
 import android.view.Gravity
 import android.widget.*
 import android.media.MediaMetadataRetriever
@@ -25,10 +21,6 @@ import java.nio.ByteOrder
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.common.util.Size
-import androidx.media3.effect.BitmapOverlay
-import androidx.media3.effect.TextureOverlay
-import androidx.media3.effect.OverlayEffect
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.ExportResult
@@ -621,7 +613,7 @@ class MainActivity : ComponentActivity() {
         return detected
     }
 
-    // MONTAGEM AUTOMÁTICA COM TRANSIÇÕES
+    // MONTAGEM AUTOMÁTICA SEM CAMADA PRETA
 
     private fun exportFirstClip(uri: Uri) {
 
@@ -707,7 +699,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 4. PREPARAR OS TRECHOS COM FADE
+        // 4. PREPARAR OS TRECHOS SEM EFEITOS DE SOBREPOSIÇÃO
 
         val editedItems = mutableListOf<EditedMediaItem>()
         val usedTimes = mutableListOf<String>()
@@ -727,8 +719,6 @@ class MainActivity : ComponentActivity() {
                     continue
                 }
 
-                val clipDurationUs = (end - safeStart) * 1000L
-
                 val clipping = MediaItem.ClippingConfiguration.Builder()
                     .setStartPositionMs(safeStart)
                     .setEndPositionMs(end)
@@ -739,20 +729,11 @@ class MainActivity : ComponentActivity() {
                     .setClippingConfiguration(clipping)
                     .build()
 
-                // EFEITO DE ENTRADA E SAÍDA PELO PRETO
-
-                val fadeOverlay = FadeThroughBlackOverlay(
-                    clipDurationUs = clipDurationUs,
-                    fadeDurationUs = 450_000L
-                )
-
-                val videoEffect = OverlayEffect(
-                    mutableListOf<TextureOverlay>(fadeOverlay)
-                )
+                // SEM OVERLAY: PRESERVA A IMAGEM ORIGINAL
 
                 val effects = Effects(
                     emptyList(),
-                    listOf(videoEffect)
+                    emptyList()
                 )
 
                 editedItems.add(
@@ -794,7 +775,7 @@ class MainActivity : ComponentActivity() {
 
                 Trechos selecionados: ${editedItems.size}
 
-                Transições: Fade pelo preto
+                Efeitos: Desativados para teste
 
                 ${usedTimes.joinToString("\n")}
 
@@ -823,7 +804,7 @@ class MainActivity : ComponentActivity() {
 
                                 Trechos unidos: ${editedItems.size}
 
-                                Transições: Fade pelo preto
+                                Efeitos: Desativados
 
                                 ${usedTimes.joinToString("\n")}
 
@@ -1082,104 +1063,5 @@ class MainActivity : ComponentActivity() {
 
     private fun Int.dp(): Int {
         return (this * resources.displayMetrics.density).toInt()
-    }
-}
-
-// TRANSIÇÃO GRADUAL PELO PRETO
-
-@UnstableApi
-private class FadeThroughBlackOverlay(
-    private val clipDurationUs: Long,
-    private val fadeDurationUs: Long
-) : BitmapOverlay() {
-
-    private val paint = Paint().apply {
-        color = Color.BLACK
-        style = Paint.Style.FILL
-    }
-
-    private var bitmap: Bitmap? = null
-    private var canvas: Canvas? = null
-
-    override fun configure(videoSize: Size) {
-        super.configure(videoSize)
-
-        bitmap?.recycle()
-
-        bitmap = Bitmap.createBitmap(
-            videoSize.width,
-            videoSize.height,
-            Bitmap.Config.ARGB_8888
-        )
-
-        canvas = Canvas(bitmap!!)
-    }
-
-    override fun getBitmap(presentationTimeUs: Long): Bitmap {
-
-        val currentBitmap = bitmap
-            ?: Bitmap.createBitmap(
-                1,
-                1,
-                Bitmap.Config.ARGB_8888
-            ).also {
-                bitmap = it
-                canvas = Canvas(it)
-            }
-
-        val currentCanvas = canvas ?: Canvas(currentBitmap)
-
-        currentCanvas.drawColor(
-            Color.TRANSPARENT,
-            PorterDuff.Mode.CLEAR
-        )
-
-        val timeUs = presentationTimeUs.coerceAtLeast(0L)
-
-        val fadeInAlpha = if (timeUs < fadeDurationUs) {
-            (
-                255f *
-                (1f - timeUs.toFloat() / fadeDurationUs)
-            ).toInt()
-        } else {
-            0
-        }
-
-        val fadeOutStart = clipDurationUs - fadeDurationUs
-
-        val fadeOutAlpha = if (timeUs > fadeOutStart) {
-            (
-                255f *
-                (
-                    (timeUs - fadeOutStart).toFloat() /
-                    fadeDurationUs
-                )
-            ).toInt()
-        } else {
-            0
-        }
-
-        paint.alpha = maxOf(
-            fadeInAlpha,
-            fadeOutAlpha
-        ).coerceIn(0, 255)
-
-        currentCanvas.drawRect(
-            0f,
-            0f,
-            currentBitmap.width.toFloat(),
-            currentBitmap.height.toFloat(),
-            paint
-        )
-
-        return currentBitmap
-    }
-
-    override fun release() {
-        super.release()
-
-        bitmap?.recycle()
-        bitmap = null
-        canvas = null
     }
 }
