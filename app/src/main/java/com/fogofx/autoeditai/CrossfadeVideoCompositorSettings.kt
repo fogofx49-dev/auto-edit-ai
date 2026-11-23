@@ -23,49 +23,74 @@ class CrossfadeVideoCompositorSettings(
 
         val timeMs = presentationTimeUs / 1000L
 
-        val currentClip = plan.clips.firstOrNull {
-            it.trackIndex == inputId &&
+        val track0Clip = plan.clips.firstOrNull {
+            it.trackIndex == 0 &&
             timeMs >= it.timelineStartMs &&
             timeMs < it.timelineEndMs
         }
 
-        if (currentClip == null) {
-            return StaticOverlaySettings.Builder()
-                .setAlphaScale(0f)
-                .build()
-        }
-
-        val otherClip = plan.clips.firstOrNull {
-            it.trackIndex != inputId &&
+        val track1Clip = plan.clips.firstOrNull {
+            it.trackIndex == 1 &&
             timeMs >= it.timelineStartMs &&
             timeMs < it.timelineEndMs
         }
 
-        val alpha = if (otherClip == null) {
-            1f
-        } else {
-            val overlapStart = maxOf(
-                currentClip.timelineStartMs,
-                otherClip.timelineStartMs
-            )
+        val alpha = when (inputId) {
 
-            val overlapEnd = minOf(
-                currentClip.timelineEndMs,
-                otherClip.timelineEndMs
-            )
-
-            if (
-                currentClip.timelineStartMs >
-                otherClip.timelineStartMs &&
-                overlapEnd > overlapStart
-            ) {
-                (
-                    (timeMs - overlapStart).toFloat() /
-                    (overlapEnd - overlapStart).toFloat()
-                ).coerceIn(0f, 1f)
-            } else {
-                1f
+            // FAIXA INFERIOR
+            0 -> {
+                if (track0Clip == null) {
+                    0f
+                } else {
+                    1f
+                }
             }
+
+            // FAIXA SUPERIOR
+            1 -> {
+
+                if (track1Clip == null) {
+                    0f
+
+                } else if (track0Clip == null) {
+                    1f
+
+                } else {
+
+                    val overlapStart = maxOf(
+                        track0Clip.timelineStartMs,
+                        track1Clip.timelineStartMs
+                    )
+
+                    val overlapEnd = minOf(
+                        track0Clip.timelineEndMs,
+                        track1Clip.timelineEndMs
+                    )
+
+                    if (overlapEnd <= overlapStart) {
+                        1f
+                    } else {
+
+                        val progress = (
+                            (timeMs - overlapStart).toFloat() /
+                            (overlapEnd - overlapStart).toFloat()
+                        ).coerceIn(0f, 1f)
+
+                        if (
+                            track1Clip.timelineStartMs >
+                            track0Clip.timelineStartMs
+                        ) {
+                            // A faixa superior é o novo clipe.
+                            progress
+                        } else {
+                            // A faixa superior é o clipe anterior.
+                            1f - progress
+                        }
+                    }
+                }
+            }
+
+            else -> 0f
         }
 
         return StaticOverlaySettings.Builder()
