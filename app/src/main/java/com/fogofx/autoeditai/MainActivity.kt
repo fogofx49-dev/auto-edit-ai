@@ -22,6 +22,8 @@ import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
 import kotlin.math.abs
 
 @UnstableApi
@@ -274,7 +276,7 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    // DETECTAR CENAS E INICIAR O CORTE
+    // DETECTAR CENAS
 
     private fun startAutomaticEdit() {
 
@@ -314,7 +316,7 @@ class MainActivity : ComponentActivity() {
 
                         $sceneList
 
-                        Preparando o primeiro corte...
+                        Preparando montagem automática...
                     """.trimIndent()
 
                     exportFirstClip(uri)
@@ -332,64 +334,95 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    // PRIMEIRO CORTE AUTOMÁTICO REAL
+    // MONTAGEM AUTOMÁTICA DE VÁRIOS TRECHOS
 
     private fun exportFirstClip(uri: Uri) {
 
         val duration = videoDurationMs
 
         if (duration <= 0L) {
-            videoInfo.text = "Não foi possível identificar a duração."
+            videoInfo.text = "Duração do vídeo inválida."
             editButton.isEnabled = true
             editButton.text = "✦ EDITAR AUTOMATICAMENTE"
             return
         }
 
-        val clipDuration = minOf(5000L, duration)
+        val clipLength = 3000L
+        val maxClips = 8
 
-        var startMs = detectedScenes.firstOrNull() ?: 0L
-
-        if (startMs + clipDuration > duration) {
-            startMs = (duration - clipDuration).coerceAtLeast(0L)
+        val startTimes = if (detectedScenes.isEmpty()) {
+            listOf(0L)
+        } else {
+            detectedScenes.distinct().sorted()
         }
 
-        val endMs = startMs + clipDuration
-
-        if (endMs <= startMs) {
-            videoInfo.text = "Não foi possível criar o trecho."
-            editButton.isEnabled = true
-            editButton.text = "✦ EDITAR AUTOMATICAMENTE"
-            return
-        }
-
-        val outputFile = File(
-            cacheDir,
-            "auto_edit_${System.currentTimeMillis()}.mp4"
-        )
-
-        videoInfo.text = """
-            ✂️ CRIANDO CORTE AUTOMÁTICO
-
-            Início: ${formatTime(startMs)}
-
-            Final: ${formatTime(endMs)}
-
-            Duração: ${formatTime(endMs - startMs)}
-
-            Exportando vídeo...
-        """.trimIndent()
+        val editedItems = mutableListOf<EditedMediaItem>()
+        val usedTimes = mutableListOf<String>()
 
         try {
 
-            val clipping = MediaItem.ClippingConfiguration.Builder()
-                .setStartPositionMs(startMs)
-                .setEndPositionMs(endMs)
+            var lastEnd = -1L
+
+            for (start in startTimes) {
+
+                if (editedItems.size >= maxClips) break
+
+                val safeStart = start.coerceAtLeast(0L)
+                val end = minOf(safeStart + clipLength, duration)
+
+                if (safeStart < lastEnd || end - safeStart < 1000L) {
+                    continue
+                }
+
+                val clipping = MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(safeStart)
+                    .setEndPositionMs(end)
+                    .build()
+
+                val mediaItem = MediaItem.Builder()
+                    .setUri(uri)
+                    .setClippingConfiguration(clipping)
+                    .build()
+
+                editedItems.add(
+                    EditedMediaItem.Builder(mediaItem).build()
+                )
+
+                usedTimes.add(
+                    "${formatTime(safeStart)} até ${formatTime(end)}"
+                )
+
+                lastEnd = end
+            }
+
+            if (editedItems.isEmpty()) {
+                throw Exception("Nenhum trecho válido foi encontrado.")
+            }
+
+            val sequence = EditedMediaItemSequence.Builder()
+                .addItems(editedItems)
                 .build()
 
-            val mediaItem = MediaItem.Builder()
-                .setUri(uri)
-                .setClippingConfiguration(clipping)
-                .build()
+            val composition = Composition.Builder(
+                listOf(sequence)
+            ).build()
+
+            val outputFile = File(
+                cacheDir,
+                "auto_edit_${System.currentTimeMillis()}.mp4"
+            )
+
+            videoInfo.text = """
+                ✂️ MONTAGEM AUTOMÁTICA
+
+                Trechos selecionados: ${editedItems.size}
+
+                ${usedTimes.joinToString("\n")}
+
+                Juntando os vídeos...
+
+                Aguarde a exportação.
+            """.trimIndent()
 
             val transformer = Transformer.Builder(this)
                 .addListener(object : Transformer.Listener {
@@ -404,14 +437,11 @@ class MainActivity : ComponentActivity() {
                             val savedLocation = saveExportedVideo(outputFile)
 
                             videoInfo.text = """
-                                ✓ CORTE CONCLUÍDO!
+                                ✓ EDIÇÃO CONCLUÍDA!
 
-                                Trecho utilizado:
+                                Trechos unidos: ${editedItems.size}
 
-                                ${formatTime(startMs)} até ${formatTime(endMs)}
-
-                                Duração:
-                                ${formatTime(endMs - startMs)}
+                                ${usedTimes.joinToString("\n")}
 
                                 Formato: MP4
 
@@ -422,14 +452,14 @@ class MainActivity : ComponentActivity() {
 
                             Toast.makeText(
                                 this@MainActivity,
-                                "Vídeo editado com sucesso!",
+                                "Montagem automática concluída!",
                                 Toast.LENGTH_LONG
                             ).show()
 
                         } catch (e: Exception) {
 
                             videoInfo.text =
-                                "O corte foi criado, mas não foi possível salvar: ${e.message}"
+                                "Erro ao salvar o vídeo: ${e.message}"
                         }
 
                         editButton.isEnabled = true
@@ -445,7 +475,7 @@ class MainActivity : ComponentActivity() {
                         outputFile.delete()
 
                         videoInfo.text =
-                            "Erro ao exportar vídeo: ${exportException.message}"
+                            "Erro na montagem: ${exportException.message}"
 
                         editButton.isEnabled = true
                         editButton.text = "✦ EDITAR AUTOMATICAMENTE"
@@ -453,20 +483,21 @@ class MainActivity : ComponentActivity() {
                 })
                 .build()
 
-            transformer.start(mediaItem, outputFile.absolutePath)
+            transformer.start(
+                composition,
+                outputFile.absolutePath
+            )
 
         } catch (e: Exception) {
 
-            outputFile.delete()
-
-            videoInfo.text = "Erro ao iniciar o corte: ${e.message}"
+            videoInfo.text = "Não foi possível montar os vídeos: ${e.message}"
 
             editButton.isEnabled = true
             editButton.text = "✦ EDITAR AUTOMATICAMENTE"
         }
     }
 
-    // SALVAR O MP4 NA PASTA DE VÍDEOS
+    // SALVAR O MP4
 
     private fun saveExportedVideo(file: File): String {
 
