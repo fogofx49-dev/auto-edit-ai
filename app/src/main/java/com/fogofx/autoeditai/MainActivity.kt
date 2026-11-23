@@ -9,12 +9,16 @@ import android.graphics.Bitmap
 import android.view.Gravity
 import android.widget.*
 import android.media.MediaMetadataRetriever
+import android.media.MediaExtractor
+import android.media.MediaCodec
+import android.media.MediaFormat
 import android.provider.OpenableColumns
 import android.provider.MediaStore
 import android.content.ContentValues
 import android.os.Build
 import android.os.Environment
 import java.io.File
+import java.nio.ByteOrder
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
@@ -25,12 +29,14 @@ import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 @UnstableApi
 class MainActivity : ComponentActivity() {
 
     private var selectedVideo: Uri? = null
     private var detectedScenes: List<Long> = emptyList()
+    private var detectedBeats: List<Long> = emptyList()
     private var videoDurationMs: Long = 0L
 
     private lateinit var videoInfo: TextView
@@ -42,6 +48,7 @@ class MainActivity : ComponentActivity() {
         if (uri != null) {
             selectedVideo = uri
             detectedScenes = emptyList()
+            detectedBeats = emptyList()
             videoDurationMs = 0L
             showVideo(uri)
         }
@@ -250,7 +257,7 @@ class MainActivity : ComponentActivity() {
                         Status: Vídeo carregado
 
                         Pressione EDITAR AUTOMATICAMENTE
-                        para detectar as cenas.
+                        para analisar cenas e música.
                     """.trimIndent()
 
                 } finally {
@@ -276,47 +283,49 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    // DETECTAR CENAS
+    // ANALISAR CENAS E MÚSICA
 
     private fun startAutomaticEdit() {
 
         val uri = selectedVideo ?: return
 
         editButton.isEnabled = false
-        editButton.text = "⏳ ANALISANDO CENAS..."
+        editButton.text = "⏳ ANALISANDO MÚSICA..."
 
-        videoInfo.text = "Analisando imagens do vídeo..."
+        videoInfo.text = """
+            Analisando vídeo...
+            
+            Detectando mudanças visuais...
+            Analisando música original...
+            Procurando batidas...
+        """.trimIndent()
 
         Thread {
 
             try {
 
                 val scenes = detectSceneChanges(uri)
+
+                val beats = try {
+                    detectAudioBeats(uri)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+
                 detectedScenes = scenes
+                detectedBeats = beats
 
                 runOnUiThread {
 
-                    val sceneList = if (scenes.isEmpty()) {
-
-                        "Nenhuma mudança visual significativa detectada."
-
-                    } else {
-
-                        scenes.mapIndexed { index, time ->
-                            "${index + 1}. ${formatTime(time)}"
-                        }.joinToString("\n")
-                    }
-
                     videoInfo.text = """
-                        ✓ CENAS DETECTADAS
+                        ✓ ANÁLISE CONCLUÍDA
 
-                        Quantidade: ${scenes.size}
+                        Cenas detectadas: ${scenes.size}
 
-                        Momentos encontrados:
+                        Batidas encontradas: ${beats.size}
 
-                        $sceneList
-
-                        Preparando montagem automática...
+                        Preparando cortes sincronizados
+                        com a música original...
                     """.trimIndent()
 
                     exportFirstClip(uri)
@@ -325,7 +334,9 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
 
                 runOnUiThread {
-                    videoInfo.text = "Erro ao analisar as cenas: ${e.message}"
+                    videoInfo.text =
+                        "Erro ao analisar o vídeo: ${e.message}"
+
                     editButton.isEnabled = true
                     editButton.text = "✦ EDITAR AUTOMATICAMENTE"
                 }
@@ -334,7 +345,275 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    // MONTAGEM AUTOMÁTICA
+    // DETECTOR DE BATIDAS DA MÚSICA ORIGINAL
+
+    private fun detectAudioBeats(uri: Uri): List<Long> {
+
+        val extractor = MediaExtractor()
+        var decoder: MediaCodec? = null
+        var decoderStarted = false
+
+        val energyFrames = mutableListOf<Pair<Long, Double>>()
+
+        try {
+
+            extractor.setDataSource(this, uri, null)
+
+            var audioTrack = -1
+            var audioFormat: MediaFormat? = null
+
+            for (i in 0 until extractor.trackCount) {
+
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+
+                if (mime.startsWith("audio/")) {
+                    audioTrack = i
+                    audioFormat = format
+                    break
+                }
+            }
+
+            if (audioTrack < 0 || audioFormat == null) {
+                return emptyList()
+            }
+
+            extractor.selectTrack(audioTrack)
+
+            val mime = audioFormat.getString(
+                MediaFormat.KEY_MIME
+            ) ?: return emptyList()
+
+            decoder = MediaCodec.createDecoderByType(mime)
+
+            decoder.configure(
+                audioFormat,
+                null,
+                null,
+                0
+            )
+
+            decoder.start()
+            decoderStarted = true
+
+            val info = MediaCodec.BufferInfo()
+            var inputFinished = false
+            var outputFinished = false
+            var outputFormat = audioFormat
+
+            while (!outputFinished) {
+
+                if (!inputFinished) {
+
+                    val inputIndex = decoder.dequeueInputBuffer(10000)
+
+                    if (inputIndex >= 0) {
+
+                        val inputBuffer = decoder.getInputBuffer(inputIndex)
+
+                        if (inputBuffer != null) {
+
+                            inputBuffer.clear()
+
+                            val sampleSize = extractor.readSampleData(
+                                inputBuffer,
+                                0
+                            )
+
+                            if (sampleSize < 0) {
+
+                                decoder.queueInputBuffer(
+                                    inputIndex,
+                                    0,
+                                    0,
+                                    0,
+                                    MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                                )
+
+                                inputFinished = true
+
+                            } else {
+
+                                val sampleTime = extractor.sampleTime
+
+                                decoder.queueInputBuffer(
+                                    inputIndex,
+                                    0,
+                                    sampleSize,
+                                    sampleTime,
+                                    0
+                                )
+
+                                extractor.advance()
+                            }
+                        }
+                    }
+                }
+
+                val outputIndex = decoder.dequeueOutputBuffer(
+                    info,
+                    10000
+                )
+
+                when {
+
+                    outputIndex >= 0 -> {
+
+                        if (info.size > 0) {
+
+                            val outputBuffer =
+                                decoder.getOutputBuffer(outputIndex)
+
+                            if (outputBuffer != null) {
+
+                                val buffer = outputBuffer.duplicate()
+
+                                buffer.position(info.offset)
+                                buffer.limit(info.offset + info.size)
+                                buffer.order(ByteOrder.LITTLE_ENDIAN)
+
+                                val encoding = try {
+                                    outputFormat.getInteger(
+                                        MediaFormat.KEY_PCM_ENCODING
+                                    )
+                                } catch (e: Exception) {
+                                    2
+                                }
+
+                                var sum = 0.0
+                                var count = 0
+
+                                if (encoding == 4) {
+
+                                    while (buffer.remaining() >= 4) {
+                                        val sample = buffer.float.toDouble()
+                                        sum += sample * sample
+                                        count++
+                                    }
+
+                                } else {
+
+                                    while (buffer.remaining() >= 2) {
+                                        val sample =
+                                            buffer.short.toDouble() / 32768.0
+
+                                        sum += sample * sample
+                                        count++
+                                    }
+                                }
+
+                                if (count > 0) {
+
+                                    val rms = sqrt(sum / count)
+
+                                    val timeMs =
+                                        info.presentationTimeUs / 1000L
+
+                                    energyFrames.add(
+                                        Pair(timeMs, rms)
+                                    )
+                                }
+                            }
+                        }
+
+                        if (
+                            info.flags and
+                            MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        ) {
+                            outputFinished = true
+                        }
+
+                        decoder.releaseOutputBuffer(outputIndex, false)
+                    }
+
+                    outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        outputFormat = decoder.outputFormat
+                    }
+                }
+            }
+
+        } finally {
+
+            if (decoderStarted) {
+                try {
+                    decoder?.stop()
+                } catch (_: Exception) {
+                }
+            }
+
+            try {
+                decoder?.release()
+            } catch (_: Exception) {
+            }
+
+            extractor.release()
+        }
+
+        if (energyFrames.size < 5) {
+            return emptyList()
+        }
+
+        val energies = energyFrames.map { it.second }
+
+        val smooth = energies.indices.map { index ->
+
+            val start = maxOf(0, index - 2)
+            val end = minOf(energies.size - 1, index + 2)
+
+            var total = 0.0
+
+            for (i in start..end) {
+                total += energies[i]
+            }
+
+            total / (end - start + 1)
+        }
+
+        val globalAverage = smooth.average()
+        val detected = mutableListOf<Long>()
+        var lastBeat = -1000L
+
+        for (i in 2 until smooth.size - 2) {
+
+            val current = smooth[i]
+
+            val localStart = maxOf(0, i - 25)
+            val localEnd = minOf(smooth.size - 1, i + 25)
+
+            var localTotal = 0.0
+
+            for (j in localStart..localEnd) {
+                localTotal += smooth[j]
+            }
+
+            val localAverage =
+                localTotal / (localEnd - localStart + 1)
+
+            val threshold = maxOf(
+                localAverage * 1.35,
+                globalAverage * 1.10
+            )
+
+            val isPeak =
+                current >= smooth[i - 1] &&
+                current >= smooth[i + 1] &&
+                current > threshold
+
+            if (isPeak) {
+
+                val time = energyFrames[i].first
+
+                if (time - lastBeat >= 300L) {
+                    detected.add(time)
+                    lastBeat = time
+                }
+            }
+        }
+
+        return detected
+    }
+
+    // MONTAGEM AUTOMÁTICA SINCRONIZADA
 
     private fun exportFirstClip(uri: Uri) {
 
@@ -348,12 +627,58 @@ class MainActivity : ComponentActivity() {
         }
 
         val clipLength = 3000L
-        val maxClips = 8
+        val maxClips = minOf(
+            8,
+            maxOf(1, (duration / clipLength).toInt())
+        )
 
-        val startTimes = if (detectedScenes.isEmpty()) {
-            listOf(0L)
-        } else {
-            detectedScenes.distinct().sorted()
+        val startTimes = mutableListOf<Long>()
+
+        for (i in 0 until maxClips) {
+
+            val target = if (maxClips == 1) {
+                0L
+            } else {
+                (
+                    i.toDouble() *
+                    (duration - clipLength).coerceAtLeast(0L) /
+                    (maxClips - 1)
+                ).toLong()
+            }
+
+            val nearestBeat = detectedBeats.minByOrNull {
+                abs(it - target)
+            }
+
+            val nearestScene = detectedScenes.minByOrNull {
+                abs(it - target)
+            }
+
+            val chosen = when {
+
+                nearestBeat != null &&
+                abs(nearestBeat - target) <= 1500L ->
+                    nearestBeat
+
+                nearestScene != null &&
+                abs(nearestScene - target) <= 1500L ->
+                    nearestScene
+
+                else -> target
+            }
+
+            val safeStart = chosen.coerceIn(
+                0L,
+                (duration - 1000L).coerceAtLeast(0L)
+            )
+
+            if (
+                startTimes.none {
+                    abs(it - safeStart) < clipLength
+                }
+            ) {
+                startTimes.add(safeStart)
+            }
         }
 
         val editedItems = mutableListOf<EditedMediaItem>()
@@ -363,7 +688,7 @@ class MainActivity : ComponentActivity() {
 
             var lastEnd = -1L
 
-            for (start in startTimes) {
+            for (start in startTimes.sorted()) {
 
                 if (editedItems.size >= maxClips) break
 
@@ -384,11 +709,8 @@ class MainActivity : ComponentActivity() {
                     .setClippingConfiguration(clipping)
                     .build()
 
-                // ADICIONAR TRECHO À MONTAGEM
-
                 editedItems.add(
-                    EditedMediaItem.Builder(mediaItem)
-                        .build()
+                    EditedMediaItem.Builder(mediaItem).build()
                 )
 
                 usedTimes.add(
@@ -418,13 +740,13 @@ class MainActivity : ComponentActivity() {
             videoInfo.text = """
                 ✂️ MONTAGEM AUTOMÁTICA
 
+                Batidas encontradas: ${detectedBeats.size}
+
                 Trechos selecionados: ${editedItems.size}
 
                 ${usedTimes.joinToString("\n")}
 
-                Preparando os trechos...
-
-                Juntando os vídeos...
+                Preparando montagem...
 
                 Aguarde a exportação.
             """.trimIndent()
@@ -445,11 +767,11 @@ class MainActivity : ComponentActivity() {
                             videoInfo.text = """
                                 ✓ EDIÇÃO CONCLUÍDA!
 
+                                Batidas detectadas: ${detectedBeats.size}
+
                                 Trechos unidos: ${editedItems.size}
 
                                 ${usedTimes.joinToString("\n")}
-
-                                Montagem: automática
 
                                 Formato: MP4
 
