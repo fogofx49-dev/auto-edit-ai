@@ -1,17 +1,15 @@
 
 package com.fogofx.autoeditai
 
-import android.app.Activity
+import androidx.activity.ComponentActivity
 import android.os.Bundle
-import android.content.Intent
 import android.net.Uri
 import android.graphics.Color
 import android.view.Gravity
-import android.view.View
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
 
     private var selectedVideo: Uri? = null
     private lateinit var videoInfo: TextView
@@ -63,7 +61,7 @@ class MainActivity : Activity() {
         }
 
         val subtitle = TextView(this).apply {
-            text = "INTELLIGÊNCIA ARTIFICIAL PARA VÍDEOS"
+            text = "INTELIGÊNCIA ARTIFICIAL PARA VÍDEOS"
             textSize = 11f
             setTextColor(Color.LTGRAY)
             gravity = Gravity.CENTER
@@ -150,7 +148,7 @@ class MainActivity : Activity() {
         content.addView(selectButton, LinearLayout.LayoutParams(
             -1, 55.dp()
         ).apply {
-            bottomMargin = 12.dp()
+            bottomMargin = 12.dp
         })
 
         content.addView(editButton, LinearLayout.LayoutParams(
