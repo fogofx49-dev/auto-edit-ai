@@ -1,4 +1,3 @@
-
 package com.fogofx.autoeditai
 
 import android.graphics.Bitmap
@@ -763,10 +762,12 @@ class MainActivity : ComponentActivity() {
                 throw Exception("Duração da montagem inválida.")
             }
 
-            // SEQUÊNCIA VISUAL: SOMENTE OS VÍDEOS
+            // SEQUÊNCIA VISUAL
+            // CONSTRUTOR COMPATÍVEL COM MEDIA3 1.5.1
 
-            val videoSequence =
-                EditedMediaItemSequence.withVideoFrom(editedItems)
+            val videoSequence = EditedMediaItemSequence(
+                editedItems
+            )
 
             // FAIXA DE ÁUDIO: COMEÇA NO INÍCIO DA MÚSICA ORIGINAL
 
@@ -787,12 +788,14 @@ class MainActivity : ComponentActivity() {
                 .setRemoveVideo(true)
                 .build()
 
-            val audioSequence =
-                EditedMediaItemSequence.withAudioFrom(
-                    listOf(originalAudio)
-                )
+            // SEQUÊNCIA DE ÁUDIO
+            // CONSTRUTOR COMPATÍVEL COM MEDIA3 1.5.1
 
-            // COMPOSIÇÃO COM VÍDEO E MÚSICA EM PARALELO
+            val audioSequence = EditedMediaItemSequence(
+                listOf(originalAudio)
+            )
+
+            // COMPOSIÇÃO COM VÍDEO E ÁUDIO
 
             val composition = Composition.Builder(
                 listOf(videoSequence, audioSequence)
@@ -849,7 +852,7 @@ class MainActivity : ComponentActivity() {
 
                                 Áudio dos clipes: Removido
 
-                                Transições: Próxima etapa
+                                Transições: Cortes diretos
 
                                 ${usedTimes.joinToString("\n")}
 
