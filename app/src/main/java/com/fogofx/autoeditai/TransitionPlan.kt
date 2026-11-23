@@ -11,12 +11,15 @@ data class TransitionClip(
     val sourceEndMs: Long,
     val timelineStartMs: Long,
     val timelineEndMs: Long,
+    val trackIndex: Int,
+    val gapBeforeMs: Long,
     val transitionToNext: TransitionType
 )
 
 data class TransitionPlan(
     val clips: List<TransitionClip>,
-    val transitionDurationMs: Long
+    val transitionDurationMs: Long,
+    val durationMs: Long
 ) {
 
     companion object {
@@ -27,11 +30,26 @@ data class TransitionPlan(
             detectedBeats: List<Long>
         ): TransitionPlan {
 
-            if (startTimes.isEmpty()) {
-                return TransitionPlan(emptyList(), 0L)
+            if (startTimes.isEmpty() || clipLengthMs <= 0L) {
+                return TransitionPlan(
+                    emptyList(),
+                    0L,
+                    0L
+                )
             }
 
-            val sorted = startTimes.distinct().sorted()
+            val sorted = startTimes
+                .filter { it >= 0L }
+                .distinct()
+                .sorted()
+
+            if (sorted.isEmpty()) {
+                return TransitionPlan(
+                    emptyList(),
+                    0L,
+                    0L
+                )
+            }
 
             val beatIntervals = detectedBeats
                 .sorted()
@@ -48,39 +66,48 @@ data class TransitionPlan(
                 averageBeat < 400L -> 250L
                 averageBeat < 650L -> 400L
                 else -> 600L
-            }.coerceAtMost(clipLengthMs / 3)
+            }.coerceAtMost(
+                (clipLengthMs / 2L).coerceAtLeast(1L)
+            )
 
-            var timelinePosition = 0L
+            val step = clipLengthMs - transitionDuration
 
-            val clips = sorted.mapIndexed { index, start ->
+            val trackEnds = mutableListOf(0L, 0L)
 
-                val isLast = index == sorted.lastIndex
+            val clips = sorted.mapIndexed { index, sourceStart ->
 
-                val sourceEnd = start + clipLengthMs
-                val timelineStart = timelinePosition
+                val trackIndex = index % 2
+
+                val timelineStart = index.toLong() * step
                 val timelineEnd = timelineStart + clipLengthMs
 
-                val clip = TransitionClip(
-                    sourceStartMs = start,
-                    sourceEndMs = sourceEnd,
+                val gapBefore = (
+                    timelineStart - trackEnds[trackIndex]
+                ).coerceAtLeast(0L)
+
+                trackEnds[trackIndex] = timelineEnd
+
+                TransitionClip(
+                    sourceStartMs = sourceStart,
+                    sourceEndMs = sourceStart + clipLengthMs,
                     timelineStartMs = timelineStart,
                     timelineEndMs = timelineEnd,
-                    transitionToNext = if (isLast) {
+                    trackIndex = trackIndex,
+                    gapBeforeMs = gapBefore,
+                    transitionToNext = if (
+                        index == sorted.lastIndex
+                    ) {
                         TransitionType.CUT
                     } else {
                         TransitionType.CROSSFADE
                     }
                 )
-
-                timelinePosition = timelineEnd -
-                    if (isLast) 0L else transitionDuration
-
-                clip
             }
 
             return TransitionPlan(
                 clips = clips,
-                transitionDurationMs = transitionDuration
+                transitionDurationMs = transitionDuration,
+                durationMs = clips.last().timelineEndMs
             )
         }
     }
