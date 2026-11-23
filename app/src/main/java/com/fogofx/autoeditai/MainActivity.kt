@@ -1,6 +1,7 @@
 
 package com.fogofx.autoeditai
 
+import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import android.os.Bundle
 import android.net.Uri
