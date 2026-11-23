@@ -6,6 +6,8 @@ import android.os.Bundle
 import android.net.Uri
 import android.graphics.Color
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.view.Gravity
 import android.widget.*
 import android.media.MediaMetadataRetriever
@@ -22,12 +24,15 @@ import java.nio.ByteOrder
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.CanvasOverlay
+import androidx.media3.effect.OverlayEffect
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.Effects
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -613,7 +618,7 @@ class MainActivity : ComponentActivity() {
         return detected
     }
 
-    // MONTAGEM AUTOMÁTICA COM PRIORIDADE ÀS BATIDAS
+    // MONTAGEM AUTOMÁTICA COM TRANSIÇÕES
 
     private fun exportFirstClip(uri: Uri) {
 
@@ -699,7 +704,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 4. PREPARAR OS TRECHOS
+        // 4. PREPARAR OS TRECHOS COM FADE
 
         val editedItems = mutableListOf<EditedMediaItem>()
         val usedTimes = mutableListOf<String>()
@@ -719,6 +724,8 @@ class MainActivity : ComponentActivity() {
                     continue
                 }
 
+                val clipDurationUs = (end - safeStart) * 1000L
+
                 val clipping = MediaItem.ClippingConfiguration.Builder()
                     .setStartPositionMs(safeStart)
                     .setEndPositionMs(end)
@@ -729,8 +736,26 @@ class MainActivity : ComponentActivity() {
                     .setClippingConfiguration(clipping)
                     .build()
 
+                // EFEITO DE ENTRADA E SAÍDA PELO PRETO
+
+                val fadeOverlay = FadeThroughBlackOverlay(
+                    clipDurationUs = clipDurationUs,
+                    fadeDurationUs = 450_000L
+                )
+
+                val videoEffect = OverlayEffect(
+                    listOf(fadeOverlay)
+                )
+
+                val effects = Effects(
+                    emptyList(),
+                    listOf(videoEffect)
+                )
+
                 editedItems.add(
-                    EditedMediaItem.Builder(mediaItem).build()
+                    EditedMediaItem.Builder(mediaItem)
+                        .setEffects(effects)
+                        .build()
                 )
 
                 usedTimes.add(
@@ -766,6 +791,8 @@ class MainActivity : ComponentActivity() {
 
                 Trechos selecionados: ${editedItems.size}
 
+                Transições: Fade pelo preto
+
                 ${usedTimes.joinToString("\n")}
 
                 Preparando montagem...
@@ -792,6 +819,8 @@ class MainActivity : ComponentActivity() {
                                 Batidas detectadas: ${detectedBeats.size}
 
                                 Trechos unidos: ${editedItems.size}
+
+                                Transições: Fade pelo preto
 
                                 ${usedTimes.joinToString("\n")}
 
@@ -1050,5 +1079,63 @@ class MainActivity : ComponentActivity() {
 
     private fun Int.dp(): Int {
         return (this * resources.displayMetrics.density).toInt()
+    }
+}
+
+// TRANSIÇÃO GRADUAL PELO PRETO
+
+@UnstableApi
+private class FadeThroughBlackOverlay(
+    private val clipDurationUs: Long,
+    private val fadeDurationUs: Long
+) : CanvasOverlay(true) {
+
+    private val paint = Paint().apply {
+        color = Color.BLACK
+        style = Paint.Style.FILL
+    }
+
+    override fun onDraw(
+        canvas: Canvas,
+        presentationTimeUs: Long
+    ) {
+
+        val timeUs = presentationTimeUs.coerceAtLeast(0L)
+
+        val fadeInAlpha = if (timeUs < fadeDurationUs) {
+            (
+                255f *
+                (1f - timeUs.toFloat() / fadeDurationUs.toFloat())
+            ).toInt()
+        } else {
+            0
+        }
+
+        val fadeOutStart = clipDurationUs - fadeDurationUs
+
+        val fadeOutAlpha = if (timeUs > fadeOutStart) {
+            (
+                255f *
+                (
+                    (timeUs - fadeOutStart).toFloat() /
+                    fadeDurationUs.toFloat()
+                )
+            ).toInt()
+        } else {
+            0
+        }
+
+        paint.alpha = maxOf(
+            fadeInAlpha,
+            fadeOutAlpha
+        ).coerceIn(0, 255)
+
+        canvas.drawRect(
+            0f,
+            0f,
+            canvas.width.toFloat(),
+            canvas.height.toFloat(),
+            paint
+        )
     }
 }
