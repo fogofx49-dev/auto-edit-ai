@@ -6,7 +6,8 @@
         android:allowBackup="true"
         android:label="AUTO EDIT AI"
         android:theme="@android:style/Theme.Material.NoActionBar"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:supportsRtl="true">
 
         <activity
             android:name=".MainActivity"
