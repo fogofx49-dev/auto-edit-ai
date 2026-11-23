@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.net.Uri
 import android.graphics.Color
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.view.Gravity
 import android.widget.*
 import android.media.MediaMetadataRetriever
@@ -24,6 +25,9 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.Effects
+import androidx.media3.effect.CanvasOverlay
+import androidx.media3.effect.OverlayEffect
 import kotlin.math.abs
 
 @UnstableApi
@@ -334,7 +338,7 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    // MONTAGEM AUTOMÁTICA DE VÁRIOS TRECHOS
+    // MONTAGEM AUTOMÁTICA COM FADE
 
     private fun exportFirstClip(uri: Uri) {
 
@@ -349,6 +353,7 @@ class MainActivity : ComponentActivity() {
 
         val clipLength = 3000L
         val maxClips = 8
+        val fadeDurationUs = 350_000L
 
         val startTimes = if (detectedScenes.isEmpty()) {
             listOf(0L)
@@ -374,6 +379,8 @@ class MainActivity : ComponentActivity() {
                     continue
                 }
 
+                val clipDurationUs = (end - safeStart) * 1000L
+
                 val clipping = MediaItem.ClippingConfiguration.Builder()
                     .setStartPositionMs(safeStart)
                     .setEndPositionMs(end)
@@ -384,8 +391,61 @@ class MainActivity : ComponentActivity() {
                     .setClippingConfiguration(clipping)
                     .build()
 
+                // EFEITO FADE IN / FADE OUT
+
+                val fadeOverlay = object : CanvasOverlay(true) {
+
+                    override fun onDraw(
+                        canvas: Canvas,
+                        presentationTimeUs: Long
+                    ) {
+
+                        val fadeIn = if (
+                            presentationTimeUs < fadeDurationUs
+                        ) {
+                            1f - (
+                                presentationTimeUs.toFloat() /
+                                    fadeDurationUs
+                                )
+                        } else {
+                            0f
+                        }
+
+                        val fadeOutStart =
+                            clipDurationUs - fadeDurationUs
+
+                        val fadeOut = if (
+                            presentationTimeUs > fadeOutStart
+                        ) {
+                            (
+                                (presentationTimeUs - fadeOutStart)
+                                    .toFloat() / fadeDurationUs
+                            ).coerceIn(0f, 1f)
+                        } else {
+                            0f
+                        }
+
+                        val alpha = (
+                            maxOf(fadeIn, fadeOut) * 255
+                        ).toInt().coerceIn(0, 255)
+
+                        canvas.drawColor(
+                            Color.argb(alpha, 0, 0, 0)
+                        )
+                    }
+                }
+
+                val effects = Effects(
+                    emptyList(),
+                    listOf(
+                        OverlayEffect(listOf(fadeOverlay))
+                    )
+                )
+
                 editedItems.add(
-                    EditedMediaItem.Builder(mediaItem).build()
+                    EditedMediaItem.Builder(mediaItem)
+                        .setEffects(effects)
+                        .build()
                 )
 
                 usedTimes.add(
@@ -419,6 +479,8 @@ class MainActivity : ComponentActivity() {
 
                 ${usedTimes.joinToString("\n")}
 
+                Aplicando transições Fade...
+
                 Juntando os vídeos...
 
                 Aguarde a exportação.
@@ -434,7 +496,8 @@ class MainActivity : ComponentActivity() {
 
                         try {
 
-                            val savedLocation = saveExportedVideo(outputFile)
+                            val savedLocation =
+                                saveExportedVideo(outputFile)
 
                             videoInfo.text = """
                                 ✓ EDIÇÃO CONCLUÍDA!
@@ -442,6 +505,8 @@ class MainActivity : ComponentActivity() {
                                 Trechos unidos: ${editedItems.size}
 
                                 ${usedTimes.joinToString("\n")}
+
+                                Transição: Fade to Black
 
                                 Formato: MP4
 
@@ -452,7 +517,7 @@ class MainActivity : ComponentActivity() {
 
                             Toast.makeText(
                                 this@MainActivity,
-                                "Montagem automática concluída!",
+                                "Montagem com Fade concluída!",
                                 Toast.LENGTH_LONG
                             ).show()
 
@@ -490,7 +555,8 @@ class MainActivity : ComponentActivity() {
 
         } catch (e: Exception) {
 
-            videoInfo.text = "Não foi possível montar os vídeos: ${e.message}"
+            videoInfo.text =
+                "Não foi possível montar os vídeos: ${e.message}"
 
             editButton.isEnabled = true
             editButton.text = "✦ EDITAR AUTOMATICAMENTE"
