@@ -472,7 +472,6 @@ class MainActivity : ComponentActivity() {
                                 buffer.limit(info.offset + info.size)
                                 buffer.order(ByteOrder.LITTLE_ENDIAN)
 
-                                // CORREÇÃO: acesso seguro ao formato de áudio
                                 val encoding = try {
                                     outputFormat?.getInteger(
                                         MediaFormat.KEY_PCM_ENCODING
@@ -614,7 +613,7 @@ class MainActivity : ComponentActivity() {
         return detected
     }
 
-    // MONTAGEM AUTOMÁTICA SINCRONIZADA
+    // MONTAGEM AUTOMÁTICA COM PRIORIDADE ÀS BATIDAS
 
     private fun exportFirstClip(uri: Uri) {
 
@@ -628,14 +627,56 @@ class MainActivity : ComponentActivity() {
         }
 
         val clipLength = 3000L
+
         val maxClips = minOf(
             8,
             maxOf(1, (duration / clipLength).toInt())
         )
 
+        val safeLimit = (duration - 1000L).coerceAtLeast(0L)
+
         val startTimes = mutableListOf<Long>()
 
+        // 1. PRIORIZAR BATIDAS DA MÚSICA
+
+        val orderedBeats = detectedBeats
+            .filter { it in 0L..safeLimit }
+            .sorted()
+
+        var lastSelected = -clipLength
+
+        for (beat in orderedBeats) {
+
+            if (startTimes.size >= maxClips) break
+
+            if (beat - lastSelected >= clipLength) {
+                startTimes.add(beat)
+                lastSelected = beat
+            }
+        }
+
+        // 2. COMPLETAR COM MUDANÇAS DE CENA
+
+        for (scene in detectedScenes.sorted()) {
+
+            if (startTimes.size >= maxClips) break
+
+            val safeStart = scene.coerceIn(0L, safeLimit)
+
+            if (
+                startTimes.none {
+                    abs(it - safeStart) < clipLength
+                }
+            ) {
+                startTimes.add(safeStart)
+            }
+        }
+
+        // 3. COMPLETAR COM POSIÇÕES DISTRIBUÍDAS
+
         for (i in 0 until maxClips) {
+
+            if (startTimes.size >= maxClips) break
 
             val target = if (maxClips == 1) {
                 0L
@@ -647,31 +688,7 @@ class MainActivity : ComponentActivity() {
                 ).toLong()
             }
 
-            val nearestBeat = detectedBeats.minByOrNull {
-                abs(it - target)
-            }
-
-            val nearestScene = detectedScenes.minByOrNull {
-                abs(it - target)
-            }
-
-            val chosen = when {
-
-                nearestBeat != null &&
-                abs(nearestBeat - target) <= 1500L ->
-                    nearestBeat
-
-                nearestScene != null &&
-                abs(nearestScene - target) <= 1500L ->
-                    nearestScene
-
-                else -> target
-            }
-
-            val safeStart = chosen.coerceIn(
-                0L,
-                (duration - 1000L).coerceAtLeast(0L)
-            )
+            val safeStart = target.coerceIn(0L, safeLimit)
 
             if (
                 startTimes.none {
@@ -681,6 +698,8 @@ class MainActivity : ComponentActivity() {
                 startTimes.add(safeStart)
             }
         }
+
+        // 4. PREPARAR OS TRECHOS
 
         val editedItems = mutableListOf<EditedMediaItem>()
         val usedTimes = mutableListOf<String>()
@@ -742,6 +761,8 @@ class MainActivity : ComponentActivity() {
                 ✂️ MONTAGEM AUTOMÁTICA
 
                 Batidas encontradas: ${detectedBeats.size}
+
+                Cenas detectadas: ${detectedScenes.size}
 
                 Trechos selecionados: ${editedItems.size}
 
