@@ -5,11 +5,13 @@ import androidx.activity.ComponentActivity
 import android.os.Bundle
 import android.net.Uri
 import android.graphics.Color
+import android.graphics.Bitmap
 import android.view.Gravity
 import android.widget.*
 import android.media.MediaMetadataRetriever
 import android.provider.OpenableColumns
 import androidx.activity.result.contract.ActivityResultContracts
+import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
 
@@ -258,13 +260,176 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startAutomaticEdit() {
-        if (selectedVideo == null) return
 
-        Toast.makeText(
-            this,
-            "Vídeo analisado! Próxima etapa: detectar cenas.",
-            Toast.LENGTH_LONG
-        ).show()
+        val uri = selectedVideo ?: return
+
+        editButton.isEnabled = false
+        editButton.text = "⏳ ANALISANDO CENAS..."
+
+        videoInfo.text = "Analisando imagens do vídeo..."
+
+        Thread {
+
+            try {
+
+                val scenes = detectSceneChanges(uri)
+
+                val result = if (scenes.isEmpty()) {
+
+                    """
+                    ✓ ANÁLISE CONCLUÍDA
+
+                    Nenhuma mudança visual significativa
+                    foi detectada nos intervalos analisados.
+                    """.trimIndent()
+
+                } else {
+
+                    val sceneList = scenes.mapIndexed { index, time ->
+                        "${index + 1}. ${formatTime(time)}"
+                    }.joinToString("\n")
+
+                    """
+                    ✓ CENAS DETECTADAS
+
+                    Quantidade: ${scenes.size}
+
+                    Momentos encontrados:
+
+                    $sceneList
+                    """.trimIndent()
+                }
+
+                runOnUiThread {
+                    videoInfo.text = result
+                    editButton.isEnabled = true
+                    editButton.text = "✦ EDITAR AUTOMATICAMENTE"
+                }
+
+            } catch (e: Exception) {
+
+                runOnUiThread {
+                    videoInfo.text = "Erro ao analisar as cenas."
+                    editButton.isEnabled = true
+                    editButton.text = "✦ EDITAR AUTOMATICAMENTE"
+                }
+            }
+
+        }.start()
+    }
+
+    private fun detectSceneChanges(uri: Uri): List<Long> {
+
+        val retriever = MediaMetadataRetriever()
+        val detectedScenes = mutableListOf<Long>()
+
+        try {
+
+            retriever.setDataSource(this, uri)
+
+            val duration = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_DURATION
+            )?.toLongOrNull() ?: 0L
+
+            val durationUs = duration * 1000L
+
+            var previousPixels: IntArray? = null
+            var lastSceneTime = -3000L
+
+            var timeUs = 1_000_000L
+
+            while (timeUs < durationUs) {
+
+                val frame = retriever.getFrameAtTime(
+                    timeUs,
+                    MediaMetadataRetriever.OPTION_CLOSEST
+                )
+
+                if (frame != null) {
+
+                    val smallFrame = Bitmap.createScaledBitmap(
+                        frame,
+                        32,
+                        18,
+                        true
+                    )
+
+                    val pixels = IntArray(32 * 18)
+
+                    smallFrame.getPixels(
+                        pixels,
+                        0,
+                        32,
+                        0,
+                        0,
+                        32,
+                        18
+                    )
+
+                    if (smallFrame !== frame) {
+                        smallFrame.recycle()
+                    }
+
+                    frame.recycle()
+
+                    val previous = previousPixels
+
+                    if (previous != null) {
+
+                        var totalDifference = 0L
+
+                        for (i in pixels.indices) {
+
+                            val r1 = Color.red(previous[i])
+                            val g1 = Color.green(previous[i])
+                            val b1 = Color.blue(previous[i])
+
+                            val r2 = Color.red(pixels[i])
+                            val g2 = Color.green(pixels[i])
+                            val b2 = Color.blue(pixels[i])
+
+                            totalDifference += abs(r1 - r2)
+                            totalDifference += abs(g1 - g2)
+                            totalDifference += abs(b1 - b2)
+                        }
+
+                        val averageDifference =
+                            totalDifference / (pixels.size * 3)
+
+                        val currentTime = timeUs / 1000L
+
+                        if (
+                            averageDifference > 38 &&
+                            currentTime - lastSceneTime >= 3000
+                        ) {
+                            detectedScenes.add(currentTime)
+                            lastSceneTime = currentTime
+                        }
+                    }
+
+                    previousPixels = pixels
+                }
+
+                timeUs += 1_000_000L
+            }
+
+        } finally {
+            retriever.release()
+        }
+
+        return detectedScenes
+    }
+
+    private fun formatTime(milliseconds: Long): String {
+
+        val seconds = milliseconds / 1000
+        val minutes = seconds / 60
+        val remainingSeconds = seconds % 60
+
+        return "%02d:%02d".format(
+            minutes,
+            remainingSeconds
+        )
     }
 
     private fun Int.dp(): Int {
