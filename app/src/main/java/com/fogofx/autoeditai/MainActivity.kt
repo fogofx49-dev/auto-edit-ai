@@ -7,6 +7,8 @@ import android.net.Uri
 import android.graphics.Color
 import android.view.Gravity
 import android.widget.*
+import android.media.MediaMetadataRetriever
+import android.provider.OpenableColumns
 import androidx.activity.result.contract.ActivityResultContracts
 
 class MainActivity : ComponentActivity() {
@@ -167,31 +169,92 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showVideo(uri: Uri) {
-        var name = "Vídeo selecionado"
 
-        try {
-            contentResolver.query(
-                uri,
-                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
-                null,
-                null,
-                null
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val index = cursor.getColumnIndex(
-                        android.provider.OpenableColumns.DISPLAY_NAME
-                    )
+        videoInfo.text = "⏳ Analisando vídeo..."
+        editButton.isEnabled = false
 
-                    if (index >= 0) {
-                        name = cursor.getString(index) ?: name
+        Thread {
+
+            var name = "Vídeo selecionado"
+            var result: String
+
+            try {
+                contentResolver.query(
+                    uri,
+                    arrayOf(OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val index = cursor.getColumnIndex(
+                            OpenableColumns.DISPLAY_NAME
+                        )
+
+                        if (index >= 0) {
+                            name = cursor.getString(index) ?: name
+                        }
                     }
                 }
-            }
-        } catch (_: Exception) {
-        }
 
-        videoInfo.text = "✓ $name"
-        editButton.isEnabled = true
+                val retriever = MediaMetadataRetriever()
+
+                try {
+                    retriever.setDataSource(this, uri)
+
+                    val duration = retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_DURATION
+                    )?.toLongOrNull() ?: 0L
+
+                    val width = retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+                    )?.toIntOrNull() ?: 0
+
+                    val height = retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+                    )?.toIntOrNull() ?: 0
+
+                    val seconds = duration / 1000
+                    val minutes = seconds / 60
+                    val remainingSeconds = seconds % 60
+
+                    val durationText = "%02d:%02d".format(
+                        minutes,
+                        remainingSeconds
+                    )
+
+                    result = """
+                        ✓ ANÁLISE CONCLUÍDA
+
+                        Arquivo: $name
+
+                        Duração: $durationText
+
+                        Resolução: ${width} × ${height}
+
+                        Status: Vídeo carregado
+                    """.trimIndent()
+
+                } finally {
+                    retriever.release()
+                }
+
+            } catch (e: Exception) {
+
+                result = """
+                    Arquivo: $name
+
+                    Não foi possível analisar este vídeo.
+                    Tente selecionar outro arquivo.
+                """.trimIndent()
+            }
+
+            runOnUiThread {
+                videoInfo.text = result
+                editButton.isEnabled = true
+            }
+
+        }.start()
     }
 
     private fun startAutomaticEdit() {
@@ -199,7 +262,7 @@ class MainActivity : ComponentActivity() {
 
         Toast.makeText(
             this,
-            "Vídeo recebido! Vamos preparar o motor de edição na próxima etapa.",
+            "Vídeo analisado! Próxima etapa: detectar cenas.",
             Toast.LENGTH_LONG
         ).show()
     }
